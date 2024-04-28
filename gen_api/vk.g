@@ -29,6 +29,15 @@ define TYPES.int		dd ?
 define TYPES.int32_t		dd ?
 define TYPES.int64_t		dq ?
 define TYPES.size_t		dq ?
+; windows.h types required:
+define TYPES.HINSTANCE			PTR
+define TYPES.HWND			PTR
+define TYPES.HMONITOR			PTR
+define TYPES.HANDLE			PTR
+define TYPES.SECURITY_ATTRIBUTES	PTR
+define TYPES.DWORD			dd ?
+define TYPES.LPCWSTR			PTR
+
 ;------------------------------------------------------------------------------
 
 define attributes
@@ -209,7 +218,7 @@ calminstruction type_funcpointer &line& ; manual conversion
 	publish N, T
 end calminstruction
 
-calminstruction type_struct &line&
+calminstruction type_struct line&
 	local tmp, name, alias
 	match tmp? =name == name tmp?, line
 	match tmp? =alias == alias tmp?, line
@@ -227,8 +236,7 @@ end calminstruction
 calminstruction type_union &line&
 	local tmp,value
 	match tmp? =name == value tmp?, line
-	arrange tmp, MEMBERS
-	arrange value, value | tmp
+	arrange value, value | MEMBERS
 	arrange tmp, =UNION
 	publish :tmp, value
 end calminstruction
@@ -473,30 +481,17 @@ calminstruction TAG_BEGIN.member &line&
 end calminstruction
 calminstruction TAG_END.member &line&
 	local tmp,A,B
-	match [ A ], content
-	jyes array
-	match : A, content
-	jyes field
-	arrange tmp, =member.=name =member.=type =content
-	jump done
-;	call ShowContent ; no content
-array:
 	match [ A ] [ B ], content
-	jyes multi
-	arrange tmp, =member.=name =member.=type [ A ]
-	jump done
-multi:
+	jno okay
 	arrange tmp, =member.=name =member.=type [ A * B ]
 	jump done
-field:
-	arrange tmp, =member.=name =member.=type : A
-done:
-	transform tmp
+okay:	arrange tmp, =member.=name =member.=type =content
+	jump done
+done:	transform tmp
 	publish :MEMBERS, tmp
-skip:
 	arrange member.name,
 	arrange member.type,
-	arrange content ,
+	arrange content,
 end calminstruction
 
 calminstruction TAG_BEGIN.name &line&
@@ -773,10 +768,10 @@ more:	transform try, TYPES
 	publish NAMED, try
 end calminstruction
 
-define FNAMES
+define FNAMES ; resolve naming conflicts, add more as discovered
 define FNAMES.format		_format
 define FNAMES.display		_display
-calminstruction(NAMED) name_filter name
+calminstruction(NAMED) name_filter name&
 	local try
 	arrange try, name
 more:	transform try, FNAMES
@@ -784,7 +779,7 @@ more:	transform try, FNAMES
 	publish NAMED, try
 end calminstruction
 
-define RTYPES
+define RTYPES ; reserve if type reduces
 define RTYPES.db	rb
 define RTYPES.dw	rw
 define RTYPES.dd	rd
@@ -799,7 +794,7 @@ more:	transform try, TYPES
 	publish NAMED, try
 end calminstruction
 
-define TBYTES
+define TBYTES ; bytes if type reduced or structure in namespace
 define TBYTES.db	1
 define TBYTES.dw	2
 define TBYTES.dd	4
@@ -811,86 +806,176 @@ more:	transform try, TYPES
 	jyes more
 	match try =?, try
 	transform try, TBYTES
+	jno zero
+;stringify try
+;display try
+	publish NAMED, try
+	exit
+zero:
+	arrange try, 0
 	publish NAMED, try
 end calminstruction
 ;------------------------------------------------------------------------------
 
-macro output_type_line name*, type*
-	local N, T, bits
-	N name_filter name
+Offset = 0
+AlignMax = 0
+AlignNeeded = 0
 
-	match =uint32_t : bits, type
-		if bits = 24 | bits = 16 | bits = 8
-			define T rb bits shr 3
+macro output_type_line member&
+	local n,t,bits,name,type,N,T,bytes,diff
+
+	bytes = -1 ; size unknown
+	match * n t, member
+		define name n
+		define type *t
+		T type_down PTR
+		bytes type_size PTR
+	else match n t, member
+		define name n
+		define type t
+		match any : bits, t
+			if bits = 24 | bits = 16 | bits = 8
+				bytes = bits shr 3
+				repeat bytes
+					define T rb %%
+					break
+				end repeat
+			else
+				err 'field size not supported'
+			end if
+		else match part [ value ], t
+			T type_down part
+			match base =?, T
+				T type_reserve base
+			end match
+			T reequ T value
+; BUG: this breaks easy too!
+bytes = 0 ; bypass
+; bytes type_size base
+; bytes = bytes * value ; enum lookup
 		else
-			err 'field size not supported'
-		end if
-	else match part [ value ], type
-		T type_down part
-		match base =?, T
-			T type_reserve base
+			T type_down t
+			bytes type_size t
 		end match
-		T reequ T value
 	else
-		T type_down type
+;:BUG 'type' name is getting consumed. So, fake it until I run down the error ...
+;VkDescriptorType
+;VkLayerSettingTypeEXT
+;VkImageType
+;VkImageType
+;VkDeviceMemoryReportEventTypeEXT
+;VkRayTracingShaderGroupTypeKHR
+;VkRayTracingShaderGroupTypeKHR
+;VkAccelerationStructureTypeNV
+;VkAccelerationStructureMemoryRequirementsTypeNV
+;VkScopeNV
+;VkPerformanceCounterScopeKHR
+;VkPerformanceValueTypeINTEL
+;VkPerformanceOverrideTypeINTEL
+;VkPerformanceConfigurationTypeINTEL
+;VkAccelerationStructureTypeKHR
+;VkAccelerationStructureTypeKHR
+;VkDescriptorType
+;VkAccelerationStructureMotionInstanceTypeNV
+;VkMicromapTypeEXT
+;VkMicromapTypeEXT
+;VkScopeKHR
+		define name type
+		type equ member
+		T type_down member
+		bytes type_size member
+display '.' ;|ERROR| this will disappear when fixed!
 	end match
 
-	match =type, T ; comment complex type when lowered
-	else
-		db ' ; ',`type
+	; does type need an alignment?
+	if bytes = 2 | bytes = 4 | bytes = 8
+		diff = Offset and (bytes-1)
+		if diff
+			repeat bytes-diff
+				db 9,9,'rb ',`%%,10
+				Offset = Offset + %%
+				break
+			end repeat
+		end if
+		if bytes > AlignMax
+			AlignMax = bytes
+		end if
+	end if
+	Offset = Offset + bytes
+
+
+	match n, name
+		N name_filter n
+	end match
+	match any, N T
+		db 9,`any
+	end match
+
+	match xxx, type
+	match yyy, T
+	if `xxx <> `yyy ; comment complex type when lowered
+		db ' ; ',`xxx
+	end if
+	end match
 	end match
 	db 10
 end macro
 
 
+
+
 irpv I,UNION
 	rawmatch name | vector, I
 		db 'struct ',name,10
-		db 9,'union',10
+		db 'union',10
 		irpv M, vector
-;			type_resolve M
-			db 9,9,`M,10
+			Offset = 0 ; no alignment output
+			output_type_line M
 		end irpv
-		db 9,'ends',10
+		db 'ends',10
 		db 'ends',10
 	end rawmatch
 end irpv
 
+
+
 irpv S,STRUCT
 	rawmatch member | sname, S
 		db 'struct ',sname,10
+		Offset = 0
+		AlignMax = 0
 		irpv M, member
-			match * name type, M
-;db 9,`name,' dq ?',10
-db 9,`name,' dq ? ;*',`type,10
-			else match name type [ value ], M
-				T type_down type
-				match any, T
-;db 9,`name,' ',`any,' ',`value,' dup (?)',10
-db 9,`name,' ',`any,' ',`value,' dup (?) ; ',`type,10
-				end match
-			else match name type, M
-				T type_down type
-				N name_filter name
-				match before after, N T
-;db 9,`before,' ',`after,10
-db 9,`before,' ',`after,' ; ',`type,10
-				end match
-			end match
+			output_type_line M
 		end irpv
+
+		; does structure need tail padding alignment?
+		if AlignMax > 1
+		diff = Offset and (AlignMax-1)
+		if diff
+			repeat AlignMax-diff
+				db 9,9,'rb ',`%%,10
+				Offset = Offset + %%
+				break
+			end repeat
+		end if
+		end if
+
+		; store structure max alignment
+		repeat 1,O:AlignMax
+			eval 'define TBYTES.',sname,' O'
+		end repeat
+
 		db 'ends',10
 	end rawmatch
-;	display 10,`S
-;	if % > 5
-;		break
-;	end if
 end irpv
+
+
 
 
 ;irpv I,INCLUDE ; not needed
 ;end irpv
 
-db '; constant and structure aliases',10
+db '; avoid/prune constant and structure aliases?',10
 irpv A,ALIASES
 	A
 end irpv
