@@ -32,10 +32,14 @@ DEFS =	/DEFAULTLIB:kernel32	\
 all:	00_null.exe\
 	01_debug_report.exe\
 	02_adv_report.exe\
+	04_enum_ext.exe\
 	10_null.exe
 
 
 # LNK4281: triggers incorrectly, ASLR is not active for FIXED!
+
+04_enum_ext.exe :  04_enum_ext.obj parts\debug_report.obj $(OBJS)
+	link /SUBSYSTEM:CONSOLE /IGNORE:4281 $(DEFS) /FIXED /BASE:0x10000 $**
 
 02_adv_report.exe :  02_adv_report.obj parts\debug_report.obj $(OBJS)
 	link /SUBSYSTEM:CONSOLE /IGNORE:4281 $(DEFS) /FIXED /BASE:0x10000 $**

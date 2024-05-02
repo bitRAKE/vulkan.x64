@@ -16,6 +16,17 @@ struc(NAME) array? items&
 	end iterate
 end struc
 
+macro __chkstk reg0*,GUARD_SIZE:4096 ; touch/probe to commit stack
+	local try,more
+	jmp try
+more:	sub rsp, GUARD_SIZE
+	sub reg0, GUARD_SIZE
+	mov [rsp], reg0
+try:	cmp reg0, GUARD_SIZE
+	jnc more
+	sub rsp, reg0
+	and spl,-16 ; ABI requirement
+end macro
 
 
 struc VK_MAKE_API_VERSION variant, major, minor, patch
