@@ -1,13 +1,34 @@
-
+; https://registry.khronos.org/vulkan/specs/1.3/registry.html
 ; vk.xml conversion script by Rickey Bowers Jr. bitRAKE
 ;
-; reversing to update script is made easier by displaying the expected
-;
+; Revisions continue to add variablity to the API: platforms, sub-sets, ...
 ;
 ; Vulkan API is very data-centric. Any helpers that prevent using the wrong
 ; constants would be beneficial, or possessing a great attention to detail.
 ;
+
+; FIXME: fasmg struct macro doesn't verify structure tail alignment?
+; patch struct.inc:
+;	if sizeof name mod alignment > 0
+;		display 'warning: struct ',`name,' not aligned to its natural boundary',10
+;	end if
+
+; TODO: add _INFO structure type default value to structure definition
+
+; TODO: option for terse API: _OPTION_TERSE_ := 1 ; (could strip them afterward)
+;	- no aliases
+;	- remove extensions and layer string constants (just use the strings)
 ;
+; TODO: option to remove all comments: _OPTION_NO_COMMENTS_ := 1 ; (could strip them afterward)
+
+_OPTION_API_ = "vulkan" ; vulkansc ; to resolve overlap
+
+format binary as 'inc'
+db 10
+db ';------------------------------------------------------------------------------',10
+db '; This file is auto-generated: MAKE changes in the generator!',10
+db '; (Or note every change above until the generator can be updated.)',10
+db ';------------------------------------------------------------------------------',10
 
 calminstruction calminstruction?.initsym? var*, val&
 	publish var, val
@@ -29,7 +50,37 @@ define TYPES.int		dd ?
 define TYPES.int32_t		dd ?
 define TYPES.int64_t		dq ?
 define TYPES.size_t		dq ?
-; windows.h types required:
+; video.xml types					enum
+define TYPES.StdVideoH264ChromaFormatIdc		uint32_t
+define TYPES.StdVideoH264ProfileIdc			uint32_t
+define TYPES.StdVideoH264LevelIdc			uint32_t
+define TYPES.StdVideoH264PocType			uint32_t
+define TYPES.StdVideoH264AspectRatioIdc			uint32_t
+define TYPES.StdVideoH264WeightedBipredIdc		uint32_t
+define TYPES.StdVideoH264ModificationOfPicNumsIdc	uint32_t
+define TYPES.StdVideoH264MemMgmtControlOp		uint32_t
+define TYPES.StdVideoH264CabacInitIdc			uint32_t
+define TYPES.StdVideoH264DisableDeblockingFilterIdc	uint32_t
+define TYPES.StdVideoH264SliceType			uint32_t
+define TYPES.StdVideoH264PictureType			uint32_t
+define TYPES.StdVideoH264NonVclNaluType			uint32_t
+
+define TYPES.StdVideoH265ChromaFormatIdc		uint32_t
+define TYPES.StdVideoH265ProfileIdc			uint32_t
+define TYPES.StdVideoH265LevelIdc			uint32_t
+define TYPES.StdVideoH265SliceType			uint32_t
+define TYPES.StdVideoH265PictureType			uint32_t
+define TYPES.StdVideoH265AspectRatioIdc			uint32_t
+; "vk_video/vulkan_video_codec_av1std.h"
+; "vk_video/vulkan_video_codec_av1std_decode.h"
+define TYPES.StdVideoAV1Profile				uint32_t
+define TYPES.StdVideoAV1Level				uint32_t
+define TYPES.StdVideoAV1SequenceHeader			uint32_t
+
+;--------------------------------------------------
+; FIXME: minor research, verify for your use case!
+;--------------------------------------------------
+;	required platform types: "windows.h"
 define TYPES.HINSTANCE			PTR
 define TYPES.HWND			PTR
 define TYPES.HMONITOR			PTR
@@ -37,6 +88,45 @@ define TYPES.HANDLE			PTR
 define TYPES.SECURITY_ATTRIBUTES	PTR
 define TYPES.DWORD			dd ?
 define TYPES.LPCWSTR			PTR
+;	required platform types: "directfb.h"
+define TYPES.IDirectFB			PTR
+define TYPES.IDirectFBSurface		PTR
+;	required platform types: "ggp_c/vulkan_types.h"
+define TYPES.GgpStreamDescriptor	uint32_t
+define TYPES.GgpFrameToken		uint64_t
+;	required platform types: "nvscibuf.h"
+define TYPES.NvSciBufAttrList		PTR
+define TYPES.NvSciBufObj		PTR
+;	required platform types: "nvscisync.h"
+define TYPES.NvSciSyncAttrList		PTR
+define TYPES.NvSciSyncObj		PTR
+define TYPES.NvSciSyncFence		PTR
+;	required platform types: "screen/screen.h"
+define TYPES._screen_context		PTR
+define TYPES._screen_window		PTR
+define TYPES._screen_buffer		PTR
+;	required platform types: "wayland-client.h"
+define TYPES.wl_display			PTR
+define TYPES.wl_surface			PTR
+;	required platform types: "X11/Xlib.h"
+define TYPES.Display			PTR
+define TYPES.VisualID			uint64_t ; system dependant
+define TYPES.Window			uint64_t ; system dependant
+;	required platform types: "X11/extensions/Xrandr.h"
+define TYPES.RROutput			uint64_t ; system dependant
+;	required platform types: "xcb/xcb.h"
+define TYPES.xcb_connection_t		PTR
+define TYPES.xcb_visualid_t		uint32_t
+define TYPES.xcb_window_t		uint32_t
+;	required platform types: "zircon/types.h"
+define TYPES.zx_handle_t		uint32_t
+
+define TYPES.MTLDevice_id		PTR
+define TYPES.MTLCommandQueue_id		PTR
+define TYPES.MTLBuffer_id		PTR
+define TYPES.MTLTexture_id		PTR
+define TYPES.IOSurfaceRef		PTR
+define TYPES.MTLSharedEvent_id		PTR
 
 ;------------------------------------------------------------------------------
 
@@ -109,8 +199,9 @@ macro VALUE_RESOLVE name*, value*
 		end virtual
 		db 'constdefine ',name,' "',char,'"',10
 	else if char = '(' ; (~)
-; TODO: examine type and resolve value, do manually - about six of them.
-		db name,':=?',value,10
+;FIXME: only single character negate
+		char = (value shr 16) and 0xFF
+		db name,':=-',char+1,10
 	else
 		db name,':=',value,10
 	end if
@@ -243,24 +334,78 @@ end calminstruction
 
 ;------------------------------------------------------------------------------
 ;							Tag BEGIN/END routines
-calminstruction TAG_BEGIN.command &line& ; not used
+
+define type.name
+define member.name
+define param.name
+define proto.name
+calminstruction TAG_BEGIN.name &line&
+	call ShowAttributes,line ; no attributes
+
+; used by (unique global names above):
+;	registry.types.type
+;	registry.types.type.member
+;	registry.commands.command.param
+;	registry.commands.command.proto
+
+	local tmp
+	match =type, scope
+	jyes skip
+	match =member, scope
+	jyes skip
+	match =param, scope
+	jyes skip
+	match =proto, scope
+	jyes skip
+	arrange tmp, =ShowScope
+	assemble tmp
+skip:
 end calminstruction
-calminstruction TAG_END.command &line&
-; name
-; comment
-;	proto.type
-;	proto.name
-;	param.type
-;	param.name
-	call ShowContent ; no content, cleared by name
+calminstruction TAG_END.name &line&
+	local var
+	arrange var, scope
+	arrange var, var=.=name
+	publish var, content
+	arrange content ,
 end calminstruction
 
-calminstruction TAG_BEGIN.commands &line& ; group wrapper
-; comment='Vulkan command definitions'
-end calminstruction
-calminstruction TAG_END.commands &line&
-	call ShowContent ; no content
-end calminstruction
+
+macro TAG_BEGIN.commands &_line& ; comment='Vulkan command definitions'
+	calminstruction TAG_BEGIN.command &line& ; not used
+	end calminstruction
+	calminstruction TAG_END.command &line&
+	end calminstruction
+
+	calminstruction TAG_BEGIN.proto &line&
+	end calminstruction
+	calminstruction TAG_END.proto &line&
+		arrange content ,
+		arrange proto.name,
+		arrange proto.type,
+	end calminstruction
+
+	calminstruction TAG_BEGIN.param &line&
+	end calminstruction
+	calminstruction TAG_END.param &line&
+		arrange content ,
+		arrange param.name,
+		arrange param.type,
+	end calminstruction
+
+	calminstruction TAG_BEGIN.implicitexternsyncparams &line&
+	end calminstruction
+	calminstruction TAG_END.implicitexternsyncparams &line&
+		call ShowAttributes,line ; no attributes
+		call ShowContent ; no content
+	end calminstruction
+end macro
+macro TAG_END.commands &line&
+	ShowContent ; no content
+	purge TAG_BEGIN.implicitexternsyncparams,TAG_END.implicitexternsyncparams
+	purge TAG_BEGIN.param,TAG_END.param
+	purge TAG_BEGIN.proto,TAG_END.proto
+	purge TAG_BEGIN.command,TAG_END.command
+end macro
 
 calminstruction TAG_BEGIN.comment &line&
 	call ShowAttributes,line ; no attributes
@@ -268,30 +413,6 @@ end calminstruction
 calminstruction TAG_END.comment &line&
 ; lots of internal documentation
 	arrange content ,
-end calminstruction
-
-calminstruction TAG_BEGIN.component &line&
-; gather for format end processing
-end calminstruction
-calminstruction TAG_END.component &line&
-	call ShowContent ; no content
-end calminstruction
-
-; "SPIR-V Extensions allowed in Vulkan and what is required to use it"
-calminstruction TAG_BEGIN.enable &line&
-; extension="VK_NVX_multiview_per_view_attributes"
-; version="VK_VERSION_1_3"
-; property="VkPhysicalDeviceVulkan12Properties"
-; member="shaderRoundingModeRTZFloat64" value="VK_TRUE"
-; value="VK_SUBGROUP_FEATURE_PARTITIONED_BIT_NV"
-; requires="VK_VERSION_1_2,VK_KHR_shader_float_controls"
-;
-; struct='VkPhysicalDeviceRawAccessChainsFeaturesNV'
-; feature='shaderRawAccessChains'
-; requires='VK_NV_raw_access_chains'
-end calminstruction
-calminstruction TAG_END.enable &line&
-	call ShowContent ; no content
 end calminstruction
 
 define pos
@@ -351,6 +472,7 @@ define extension_supported '|'
 define extension_number '|'
 define extension_name '|'
 
+define member.enum
 calminstruction TAG_BEGIN.enum &line&
 	local tmp, val, name
 
@@ -408,8 +530,15 @@ done:	assemble tmp
 
 bypass: ; member, remove
 end calminstruction
-calminstruction TAG_END.enum &line&
-; forward member content for fixed arrays
+calminstruction TAG_END.enum &line& ; forward member content for fixed arrays
+	match , line
+	jno skip
+	local var
+	arrange var, scope
+	arrange var, var=.=enum ; only: member.enum
+	publish var, content
+	arrange content ,
+skip:
 end calminstruction
 
 calminstruction TAG_BEGIN.enums &line& ; wrapper for enum
@@ -423,22 +552,32 @@ calminstruction TAG_END.enums &line&
 	call ShowContent ; no content
 end calminstruction
 
-calminstruction TAG_BEGIN.extension &line&
-	local tmp
-	match tmp? =name == extension_name tmp?, line
-	match tmp? =number == extension_number tmp?, line
-	match tmp? =supported == extension_supported tmp?, line
+calminstruction TAG_BEGIN.unused &line& ; child of enums
 end calminstruction
-calminstruction TAG_END.extension &line&
+calminstruction TAG_END.unused &line&
 	call ShowContent ; no content
 end calminstruction
 
-calminstruction TAG_BEGIN.extensions &line& ; group wrapper
-; comment='Vulkan extension interface definitions'
-end calminstruction
-calminstruction TAG_END.extensions &line&
-	call ShowContent ; no content
-end calminstruction
+
+
+macro TAG_BEGIN.extensions &_line& ; comment='Vulkan extension interface definitions'
+	calminstruction TAG_BEGIN.extension &line&
+		local tmp
+		match tmp? =name == extension_name tmp?, line
+		match tmp? =number == extension_number tmp?, line
+		match tmp? =supported == extension_supported tmp?, line
+
+	end calminstruction
+	calminstruction TAG_END.extension &line&
+		call ShowContent ; no content
+	end calminstruction
+end macro
+macro TAG_END.extensions &_line&
+	ShowContent ; no content
+	purge TAG_BEGIN.extension,TAG_END.extension
+	purge TAG_BEGIN.extensions,TAG_END.extensions
+end macro
+
 
 calminstruction TAG_BEGIN.feature &line&
 ;	arrange extension_supported, 'disabled'
@@ -450,208 +589,263 @@ calminstruction TAG_END.feature &line&
 	call ShowContent ; no content
 end calminstruction
 
-calminstruction TAG_BEGIN.format &line&
-; packed='16'
-; compressed='ASTC HDR'
-; name='VK_FORMAT_R16G16_SFIXED5_NV'
-; class='32-bit'
-; blockSize='4'
-; texelsPerBlock='1'
-; blockExtent='10,8,1'
-end calminstruction
-calminstruction TAG_END.format &line&
-	call ShowContent ; no content
-end calminstruction
 
-calminstruction TAG_BEGIN.formats &line&
-	call ShowAttributes,line ; no attributes
-end calminstruction
-calminstruction TAG_END.formats &line&
-	call ShowContent ; no content
-end calminstruction
+macro TAG_BEGIN.formats &_line&
+	calminstruction TAG_BEGIN.format &line&
+		; component
+	end calminstruction
+	calminstruction TAG_END.format &line&
+		call ShowContent ; no content
+	end calminstruction
 
-calminstruction TAG_BEGIN.implicitexternsyncparams &line&
-	call ShowAttributes,line ; no attributes
-end calminstruction
-calminstruction TAG_END.implicitexternsyncparams &line&
-	call ShowContent ; no content
-end calminstruction
+	calminstruction TAG_BEGIN.component &line&
+		; name, bits, 
+	end calminstruction
+	calminstruction TAG_END.component &line&
+		call ShowContent ; no content
+	end calminstruction
 
-calminstruction TAG_BEGIN.member &line&
-end calminstruction
-calminstruction TAG_END.member &line&
-	local tmp,A,B
-	match [ A ] [ B ], content
-	jno okay
-	arrange tmp, =member.=name =member.=type [ A * B ]
-	jump done
-okay:	arrange tmp, =member.=name =member.=type =content
-	jump done
-done:	transform tmp
-	publish :MEMBERS, tmp
-	arrange member.name,
-	arrange member.type,
-	arrange content,
-end calminstruction
+	calminstruction TAG_BEGIN.plane &line&
+	end calminstruction
+	calminstruction TAG_END.plane &line&
+		call ShowContent ; no content
+	end calminstruction
 
-calminstruction TAG_BEGIN.name &line&
-	call ShowAttributes,line ; no attributes
-end calminstruction
-calminstruction TAG_END.name &line&
-	local var
-	arrange var, scope
-	arrange var, var=.=name
-	publish var, content
-	arrange content ,
-end calminstruction
+	calminstruction TAG_BEGIN.spirvimageformat &line&
+	; name='Rgba32f'
+	end calminstruction
+	calminstruction TAG_END.spirvimageformat &line&
+		call ShowContent ; no content
+	end calminstruction
+end macro
+macro TAG_END.formats &line&
+	ShowAttributes line ; no attributes
+	ShowContent ; no content
+	purge TAG_BEGIN.spirvimageformat,TAG_END.spirvimageformat
+	purge TAG_BEGIN.plane,TAG_END.plane
+	purge TAG_BEGIN.component,TAG_END.component
+	purge TAG_BEGIN.format,TAG_END.format
+end macro
 
-calminstruction TAG_BEGIN.param &line& ; resolve manually
-end calminstruction
-calminstruction TAG_END.param &line&
-; command param details
-	arrange content ,
-end calminstruction
 
-calminstruction TAG_BEGIN.plane &line&
-; index='1'
-; widthDivisor='1'
-; heightDivisor='1'
-; compatible='VK_FORMAT_R16G16_UNORM'
-end calminstruction
-calminstruction TAG_END.plane &line&
-	call ShowContent ; no content
-end calminstruction
+macro TAG_BEGIN.platforms &line&
+	calminstruction TAG_BEGIN.platform &line&
+	; name='win32'
+	; protect='VK_USE_PLATFORM_WIN32_KHR'
+	; comment='QNX Screen Graphics Subsystem'
+	end calminstruction
+	calminstruction TAG_END.platform &line&
+		call ShowContent ; no content
+	end calminstruction
+end macro
+macro TAG_END.platforms &line&
+	ShowContent ; no content
+	purge TAG_BEGIN.platform,TAG_END.platform
+end macro
 
-calminstruction TAG_BEGIN.platform &line&
-; name='screen'
-; protect='VK_USE_PLATFORM_SCREEN_QNX'
-; comment='QNX Screen Graphics Subsystem'
-end calminstruction
-calminstruction TAG_END.platform &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.platforms &line&
-; comment='Vulkan platform names, reserved for use with platform- and window system-specific extensions'
-end calminstruction
-calminstruction TAG_END.platforms &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.proto &line&
-	call ShowAttributes,line ; no attributes
-end calminstruction
-calminstruction TAG_END.proto &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.registry &line&
-	call ShowAttributes,line ; no attributes
+
+calminstruction TAG_BEGIN.registry &line& ; top level wrapper
 end calminstruction
 calminstruction TAG_END.registry &line&
+	call ShowAttributes,line ; no attributes
 	call ShowContent ; no content
 end calminstruction
-calminstruction TAG_BEGIN.remove &line&
+
+
+
+macro TAG_BEGIN.remove &line&
+	; enum,type,command
+	calminstruction TAG_BEGIN.command &line&
+	end calminstruction
+	calminstruction TAG_END.command &line&
+		call ShowContent
+	end calminstruction
+end macro
+macro TAG_END.remove &line&
+	ShowContent ; no content
+	purge TAG_BEGIN.command,TAG_END.command
+end macro
+
+
+; feature & extension
+macro TAG_BEGIN.require &_line&
+	; enum,type,command
+	calminstruction TAG_BEGIN.command &line&
+	end calminstruction
+	calminstruction TAG_END.command &line&
+		call ShowContent
+	end calminstruction
+end macro
+macro TAG_END.require &line&
+	ShowContent ; no content
+	purge TAG_BEGIN.command,TAG_END.command
+end macro
+
+
+
+; "SPIR-V Extensions allowed in Vulkan and what is required to use it"
+calminstruction TAG_BEGIN.enable &line&
+; extension="VK_NVX_multiview_per_view_attributes"
+; version="VK_VERSION_1_3"
+; property="VkPhysicalDeviceVulkan12Properties"
+; member="shaderRoundingModeRTZFloat64" value="VK_TRUE"
+; value="VK_SUBGROUP_FEATURE_PARTITIONED_BIT_NV"
+; requires="VK_VERSION_1_2,VK_KHR_shader_float_controls"
+;
+; struct='VkPhysicalDeviceRawAccessChainsFeaturesNV'
+; feature='shaderRawAccessChains'
+; requires='VK_NV_raw_access_chains'
 end calminstruction
-calminstruction TAG_END.remove &line&
+calminstruction TAG_END.enable &line&
 	call ShowContent ; no content
 end calminstruction
-calminstruction TAG_BEGIN.require &line&
-; comment='functionality re-used unmodified from VK_NV_external_sci_sync'
-; depends='VKSC_VERSION_1_0'
-; api='vulkansc'
-end calminstruction
-calminstruction TAG_END.require &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.spirvcapabilities &line&
-; comment='SPIR-V Capabilities allowed in Vulkan and what is required to use it'
-end calminstruction
-calminstruction TAG_END.spirvcapabilities &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.spirvcapability &line&
-; name='Matrix'
-end calminstruction
-calminstruction TAG_END.spirvcapability &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.spirvextension &line&
-; name='SPV_KHR_variable_pointers'
-end calminstruction
-calminstruction TAG_END.spirvextension &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.spirvextensions &line&
+
+macro TAG_BEGIN.spirvcapabilities &_line&
+	calminstruction TAG_BEGIN.spirvcapability &line&
+	; name='Matrix'
+	end calminstruction
+	calminstruction TAG_END.spirvcapability &line&
+		call ShowContent ; no content
+	end calminstruction
+end macro
+macro TAG_END.spirvcapabilities &line&
+	ShowContent ; no content
+	purge TAG_BEGIN.spirvcapability,TAG_END.spirvcapability
+end macro
+
+macro TAG_BEGIN.spirvextensions &_line&
 ; comment='SPIR-V Extensions allowed in Vulkan and what is required to use it'
-end calminstruction
-calminstruction TAG_END.spirvextensions &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.spirvimageformat &line&
-; name='Rgba32f'
-end calminstruction
-calminstruction TAG_END.spirvimageformat &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.sync &line&
+	calminstruction TAG_BEGIN.spirvextension &line&
+	; name='SPV_KHR_variable_pointers'
+	end calminstruction
+	calminstruction TAG_END.spirvextension &line&
+		call ShowContent ; no content
+	end calminstruction
+end macro
+macro TAG_END.spirvextensions &line&
+	ShowContent ; no content
+	purge TAG_BEGIN.spirvextension,TAG_END.spirvextension
+end macro
+
+
+macro TAG_BEGIN.sync &_line&
 ; comment='Machine readable representation of the synchronization objects and their mappings'
-end calminstruction
-calminstruction TAG_END.sync &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.syncaccess &line&
-; name='VK_ACCESS_2_NONE'
-; alias='VK_ACCESS_NONE'
-end calminstruction
-calminstruction TAG_END.syncaccess &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.syncequivalent &line&
-; stage='VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT'
-; access='VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT'
-end calminstruction
-calminstruction TAG_END.syncequivalent &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.syncpipeline &line&
-; name='graphics mesh'
-; depends='VK_NV_mesh_shader,VK_EXT_mesh_shader'
-end calminstruction
-calminstruction TAG_END.syncpipeline &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.syncpipelinestage &line&
-; order='None'
-; before='VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT'
-end calminstruction
-calminstruction TAG_END.syncpipelinestage &line&
-; sync bit symbol names
-	arrange content ,
-end calminstruction
-calminstruction TAG_BEGIN.syncstage &line&
-; name='VK_PIPELINE_STAGE_2_NONE'
-; alias='VK_PIPELINE_STAGE_NONE'
-end calminstruction
-calminstruction TAG_END.syncstage &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.syncsupport &line&
-; queues='graphics,compute,transfer'
-; stage='VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR'
-end calminstruction
-calminstruction TAG_END.syncsupport &line&
-	call ShowContent ; no content
-end calminstruction
+	calminstruction TAG_BEGIN.syncaccess &line&
+	; name='VK_ACCESS_2_NONE'
+	; alias='VK_ACCESS_NONE'
+	end calminstruction
+	calminstruction TAG_END.syncaccess &line&
+		call ShowContent ; no content
+	end calminstruction
+	
+	calminstruction TAG_BEGIN.syncequivalent &line&
+	; stage='VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT'
+	; access='VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT'
+	end calminstruction
+	calminstruction TAG_END.syncequivalent &line&
+		call ShowContent ; no content
+	end calminstruction
+	
+	calminstruction TAG_BEGIN.syncpipeline &line&
+	; name='graphics mesh'
+	; depends='VK_NV_mesh_shader,VK_EXT_mesh_shader'
+	end calminstruction
+	calminstruction TAG_END.syncpipeline &line&
+		call ShowContent ; no content
+	end calminstruction
+	
+	calminstruction TAG_BEGIN.syncpipelinestage &line&
+	; order='None'
+	; before='VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT'
+	end calminstruction
+	calminstruction TAG_END.syncpipelinestage &line&
+	; sync bit symbol names
+		arrange content ,
+	end calminstruction
+	
+	calminstruction TAG_BEGIN.syncstage &line&
+	; name='VK_PIPELINE_STAGE_2_NONE'
+	; alias='VK_PIPELINE_STAGE_NONE'
+	end calminstruction
+	calminstruction TAG_END.syncstage &line&
+		call ShowContent ; no content
+	end calminstruction
+	
+	calminstruction TAG_BEGIN.syncsupport &line&
+	; queues='graphics,compute,transfer'
+	; stage='VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR'
+	end calminstruction
+	calminstruction TAG_END.syncsupport &line&
+		call ShowContent ; no content
+	end calminstruction
+end macro
+macro TAG_END.sync &_line&
+	ShowContent ; no content
+	purge TAG_BEGIN.syncaccess,TAG_END.syncaccess
+	purge TAG_BEGIN.syncequivalent,TAG_END.syncequivalent
+	purge TAG_BEGIN.syncpipeline,TAG_END.syncpipeline
+	purge TAG_BEGIN.syncpipelinestage,TAG_END.syncpipelinestage
+	purge TAG_BEGIN.syncstage,TAG_END.syncstage
+	purge TAG_BEGIN.syncsupport,TAG_END.syncsupport
+end macro
 
-calminstruction TAG_BEGIN.tag &line&
-end calminstruction
-calminstruction TAG_END.tag &line&
-	call ShowContent ; no content
-end calminstruction
-calminstruction TAG_BEGIN.tags &line&
-end calminstruction
-calminstruction TAG_END.tags &line&
-	call ShowContent ; no content
-end calminstruction
 
+
+macro TAG_BEGIN.tags &line& ; group of author tags
+	calminstruction TAG_BEGIN.tag &line&
+	end calminstruction
+	calminstruction TAG_END.tag &line&
+		; name - name of the tag
+		; author - company or project name
+		; contact - name and contact information
+		call ShowContent ; no content
+	end calminstruction
+end macro
+macro TAG_END.tags &line&
+	ShowContent ; no content
+	purge TAG_BEGIN.tag,TAG_END.tag
+end macro
+
+define member.enum
+macro TAG_BEGIN.types &_line&
+	calminstruction TAG_BEGIN.member &line&
+	end calminstruction
+	calminstruction TAG_END.member &line&
+		local tmp,A,B
+
+		; API filtering
+		match tmp? =api == A tmp?, line
+		jno go
+		check A = _OPTION_API_
+		jno skip
+
+	go:	match , member.enum
+		jyes ggo
+;arrange tmp, =member.=enum
+;transform tmp
+;stringify tmp
+;display tmp
+;display 10
+		arrange tmp, =member.=name =member.=type =member.=enum ]
+		jump done
+	ggo:	match [ A ] [ B ], content
+		jno okay
+		arrange tmp, =member.=name =member.=type [ A * B ]
+		jump done
+	okay:	arrange tmp, =member.=name =member.=type =content
+		jump done
+	done:	transform tmp
+		publish :MEMBERS, tmp
+	skip:	arrange content,
+		arrange member.name,
+		arrange member.type,
+		arrange member.enum,
+	end calminstruction
+end macro
+macro TAG_END.types &line&
+	ShowContent ; no content
+	purge TAG_BEGIN.member,TAG_END.member
+end macro
 calminstruction TAG_BEGIN.type &line&
 	match , line
 	jno outer
@@ -667,16 +861,33 @@ calminstruction TAG_END.type &line&
 	local value,tmp,var
 	match , line
 	jyes inner
+
+	; API filtering
+	match tmp? =api == A tmp?, line
+	jno go
+	check A = _OPTION_API_
+	jno skip
+go:
 	; dispatch based on category
 	match tmp? =category == value tmp?, line
 	jyes dispatch
-	; audit: requires, no content?
+skip:
+	; registry.types
+	; registry.feature.require
+	; registry.feature.remove
+	; registry.extensions.extension.require
 	exit
 
-inner:	arrange var, scope ; scopes using type should clear the global
+inner:
+	; registry.types.type
+	; registry.types.type.member
+	; registry.commands.command.param
+	; registry.commands.command.proto
+	arrange var, scope ; scopes using type should clear the global
 	arrange var, var=.=type
 	publish var, content
-	jump done
+	arrange content ,
+	exit
 
 dispatch: ; unwrap category string
 	arrange tmp, =eval 'define var type_',value
@@ -684,24 +895,14 @@ dispatch: ; unwrap category string
 	arrange tmp, =var line
 	transform tmp
 	assemble tmp
-done:
+	arrange type.type,
 	arrange content ,
 end calminstruction
 
-calminstruction TAG_BEGIN.types &line&
-end calminstruction
-calminstruction TAG_END.types &line&
-	call ShowContent ; no content
-end calminstruction
-
-calminstruction TAG_BEGIN.unused &line&
-end calminstruction
-calminstruction TAG_END.unused &line&
-	call ShowContent ; no content
-end calminstruction
-
 ;------------------------------------------------------------------------------
-; https://github.com/KhronosGroup/Vulkan-Docs/blob/main/xml/vk.xml?raw=true
+; https://raw.githubusercontent.com/KhronosGroup/Vulkan-Docs/main/xml/vk.xml
+; Not a general XML parser ...
+;	- can inject spaces in content
 retaincomments
 isolatelines
 calminstruction reader! &line&
@@ -757,9 +958,9 @@ include 'vk.xml',mvmacro ?,reader
 purge ?
 removecomments
 combinelines
+
 ;------------------------------------------------------------------------------
-format binary as 'inc'
-;------------------------------------------------------------------------------
+
 calminstruction(NAMED) type_down type ; types that don't reduce are structures
 	local try
 	arrange try, type
@@ -807,119 +1008,150 @@ more:	transform try, TYPES
 	match try =?, try
 	transform try, TBYTES
 	jno zero
-;stringify try
-;display try
 	publish NAMED, try
 	exit
 zero:
 	arrange try, 0
 	publish NAMED, try
 end calminstruction
+
+define TLIGN ; required alignment
+define TLIGN.db 1
+define TLIGN.dw 2
+define TLIGN.dd 4
+define TLIGN.dq 8
+calminstruction(NAMED) type_align type ;--------------- add structures to TLIGN
+	local try
+	arrange try, type
+more:	transform try, TYPES
+	jyes more
+	match try =?, try
+	transform try, TLIGN
+	jno zero
+	publish NAMED, try
+	exit
+zero:
+	arrange try, 1
+	publish NAMED, try
+end calminstruction
+
 ;------------------------------------------------------------------------------
 
 Offset = 0
 AlignMax = 0
-AlignNeeded = 0
 
-macro output_type_line member&
-	local n,t,bits,name,type,N,T,bytes,diff
+define _sym	; filtered name
+define ty	; reduced type
+bytes = 0	; bytes of type
+lign = 1	; type alignment required
+calminstruction output_type_line s_or_u*, member&
+	local tmp,sym,tty,count,bits
+	compute count, 1
 
-	bytes = -1 ; size unknown
-	match * n t, member
-		define name n
-		define type *t
-		T type_down PTR
-		bytes type_size PTR
-	else match n t, member
-		define name n
-		define type t
-		match any : bits, t
-			if bits = 24 | bits = 16 | bits = 8
-				bytes = bits shr 3
-				repeat bytes
-					define T rb %%
-					break
-				end repeat
-			else
-				err 'field size not supported'
-			end if
-		else match part [ value ], t
-			T type_down part
-			match base =?, T
-				T type_reserve base
-			end match
-			T reequ T value
-; BUG: this breaks easy too!
-bytes = 0 ; bypass
-; bytes type_size base
-; bytes = bytes * value ; enum lookup
-		else
-			T type_down t
-			bytes type_size t
-		end match
-	else
-;:BUG 'type' name is getting consumed. So, fake it until I run down the error ...
-;VkDescriptorType
-;VkLayerSettingTypeEXT
-;VkImageType
-;VkImageType
-;VkDeviceMemoryReportEventTypeEXT
-;VkRayTracingShaderGroupTypeKHR
-;VkRayTracingShaderGroupTypeKHR
-;VkAccelerationStructureTypeNV
-;VkAccelerationStructureMemoryRequirementsTypeNV
-;VkScopeNV
-;VkPerformanceCounterScopeKHR
-;VkPerformanceValueTypeINTEL
-;VkPerformanceOverrideTypeINTEL
-;VkPerformanceConfigurationTypeINTEL
-;VkAccelerationStructureTypeKHR
-;VkAccelerationStructureTypeKHR
-;VkDescriptorType
-;VkAccelerationStructureMotionInstanceTypeNV
-;VkMicromapTypeEXT
-;VkMicromapTypeEXT
-;VkScopeKHR
-		define name type
-		type equ member
-		T type_down member
-		bytes type_size member
-display '.' ;|ERROR| this will disappear when fixed!
-	end match
+	match * =const * sym =const tty, member
+	jyes ppointer
+	match * sym =const tty, member
+	jyes pointer
+	match * sym tty, member ; void
+	jyes pointer
+	match sym tty [ count ], member
+	jyes fixed
+	match sym tty : bits, member
+	jyes field
+	match sym tty, member
+	jno audit
+	arrange tmp,=ty =type_down tty
+	assemble tmp
+	arrange tmp,=bytes =type_size ty
+	assemble tmp
+	jump ready
+ppointer:
+	arrange tmp,=ty =type_down =PTR
+	assemble tmp
+	arrange tty, **tty
+	arrange tmp,=bytes =type_size ty
+	assemble tmp
+	jump ready
+pointer:
+	arrange tmp,=ty =type_down =PTR
+	assemble tmp
+	arrange tty, *tty
+	arrange tmp,=bytes =type_size ty
+	assemble tmp
+	jump ready
+fixed:
+	arrange tmp,=ty =type_reserve tty
+	assemble tmp
+;TODO: non-reduced types need FIXME:
+;	NAME TYPE
+;	rb (COUNT-1)*sizeof TYPE
+	arrange tty, tty[count]
+	arrange ty, ty count
+	arrange tmp,=bytes =type_size ty
+	assemble tmp
+	jump ready
+field:
+; TODO: other cases
+	compute count, bits shr 3
+	arrange tmp,=ty =type_reserve =db
+	assemble tmp
+	arrange tty, tty:bits
+	arrange ty, ty count
+	compute bytes, count
+	jump ready
 
-	; does type need an alignment?
-	if bytes = 2 | bytes = 4 | bytes = 8
-		diff = Offset and (bytes-1)
-		if diff
-			repeat bytes-diff
-				db 9,9,'rb ',`%%,10
-				Offset = Offset + %%
-				break
-			end repeat
-		end if
-		if bytes > AlignMax
-			AlignMax = bytes
-		end if
-	end if
-	Offset = Offset + bytes
+; Unions require an update of the offset and alignment, so the total bytes
+; and alignment can be determined at end. Structures need the same, but also
+; type alignment prior.
+ready:
+	arrange tmp,=lign =type_align ty
+	assemble tmp
+
+	local bump
+	compute bump, 0
+	check s_or_u ; union doesn't need alignment
+	jno even
+
+	compute bump, Offset and (lign-1)
+	check bump
+	jno even
+	emit 1, 9
+	emit 3, 'rb '
+	arrange tmp, bump
+	stringify tmp
+	emit lengthof tmp, tmp
+	emit 1, 10
+even:
+	arrange tmp,=_sym =name_filter sym ; avoid name conflicts
+	assemble tmp
+
+	emit 1, 9
+	stringify _sym
+	emit lengthof _sym, _sym
+	emit 1, ' '
+	stringify ty
+	emit lengthof ty, ty
+
+; _OPTION_COMMENT_TYPE_ and changed:
+	emit 3, ' ; '
+	stringify tty
+	emit lengthof tty, tty
+	emit 1, 10
+
+	check AlignMax < lign
+	jno asame
+	compute AlignMax, lign
+asame:	compute Offset, Offset + bump + bytes
+	exit
+
+audit:	arrange tmp, member
+	stringify tmp
+	display tmp
+	display 10
+end calminstruction
 
 
-	match n, name
-		N name_filter n
-	end match
-	match any, N T
-		db 9,`any
-	end match
 
-	match xxx, type
-	match yyy, T
-	if `xxx <> `yyy ; comment complex type when lowered
-		db ' ; ',`xxx
-	end if
-	end match
-	end match
-	db 10
-end macro
 
 
 
@@ -928,12 +1160,19 @@ irpv I,UNION
 	rawmatch name | vector, I
 		db 'struct ',name,10
 		db 'union',10
+AlignMax = 1
+MaxOffset = 0
 		irpv M, vector
-			Offset = 0 ; no alignment output
-			output_type_line M
+Offset = 0
+			output_type_line 0,M
+;TODO: gather max offset for real size
+if MaxOffset < Offset
+	MaxOffset = Offset
+end if
 		end irpv
 		db 'ends',10
 		db 'ends',10
+; set bytes & align
 	end rawmatch
 end irpv
 
@@ -941,30 +1180,26 @@ end irpv
 
 irpv S,STRUCT
 	rawmatch member | sname, S
+Offset = 0
+AlignMax = 1
 		db 'struct ',sname,10
-		Offset = 0
-		AlignMax = 0
 		irpv M, member
-			output_type_line M
+			output_type_line 1,M
 		end irpv
-
-		; does structure need tail padding alignment?
-		if AlignMax > 1
-		diff = Offset and (AlignMax-1)
-		if diff
-			repeat AlignMax-diff
-				db 9,9,'rb ',`%%,10
-				Offset = Offset + %%
-				break
-			end repeat
-		end if
-		end if
-
-		; store structure max alignment
-		repeat 1,O:AlignMax
-			eval 'define TBYTES.',sname,' O'
-		end repeat
-
+; post alignment
+repeat Offset and (AlignMax-1)
+	db 9,'rb ',`%%,10
+	Offset = Offset + %%
+	break
+end repeat
+;repeat 1, _O:Offset, _A:AlignMax
+;	if _O
+;	eval 'define TBYTES.',sname,' ',`_O
+;	eval 'define TLIGN.',sname,' ',`_A
+;	display 'define TBYTES.',sname,' ',`_O,10
+;	display 'define TLIGN.',sname,' ',`_A,10
+;	end if
+;end repeat
 		db 'ends',10
 	end rawmatch
 end irpv
@@ -979,3 +1214,74 @@ db '; avoid/prune constant and structure aliases?',10
 irpv A,ALIASES
 	A
 end irpv
+
+;--------------------------------------------------------------------- Problems:
+; remove duplicate const lines
+;?remove aliases
+
+
+; multiple: (extension overlap?)
+;2	VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE:=4
+;2	VK_STRUCTURE_TYPE_DEVICE_GROUP_PRESENT_CAPABILITIES_KHR:=1000060007
+;3	VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR:=1
+;	VK_DEBUG_REPORT_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION_EXT:=1000156000
+;
+;need to exclude other arch, or add sizes for their dependant types?
+;removing structures with unknown types in other arch
+;
+;	VkBufferCollectionCreateInfoFUCHSIA.collectionToken
+;
+;
+; struct NM_FINDITEM not aligned to its natural boundary
+; VkPhysicalDeviceProperties.limits not aligned to its natural boundary
+; VkSparseImageMemoryRequirements.imageMipTailSize not aligned to its natural boundary
+; VkSparseImageMemoryRequirements.imageMipTailOffset not aligned to its natural boundary
+; VkSparseImageMemoryRequirements.imageMipTailStride not aligned to its natural boundary
+; struct VkSparseImageMemoryRequirements not aligned to its natural boundary
+; VkImageFormatProperties.maxResourceSize not aligned to its natural boundary
+; struct VkImageFormatProperties not aligned to its natural boundary
+; VkImageCreateInfo.pQueueFamilyIndices not aligned to its natural boundary
+; VkSparseImageMemoryBind.memory not aligned to its natural boundary
+; VkSparseImageMemoryBind.memoryOffset not aligned to its natural boundary
+; VkComputePipelineCreateInfo.stage not aligned to its natural boundary
+; VkPhysicalDeviceGroupProperties.physicalDevices not aligned to its natural boundary
+; struct VkDisplayModeProperties2KHR not aligned to its natural boundary
+; VkAttachmentSampleLocationsEXT.sampleLocationsInfo not aligned to its natural boundary
+; struct VkAttachmentSampleLocationsEXT not aligned to its natural boundary
+; VkSubpassSampleLocationsEXT.sampleLocationsInfo not aligned to its natural boundary
+; struct VkSubpassSampleLocationsEXT not aligned to its natural boundary
+; VkPipelineSampleLocationsStateCreateInfoEXT.sampleLocationsInfo not aligned to its natural boundary
+; VkNativeBufferANDROID.usage2 not aligned to its natural boundary
+; VkShaderStatisticsInfoAMD.resourceUsage not aligned to its natural boundary
+; VkGeometryNV.geometry not aligned to its natural boundary
+; VkPerformanceValueINTEL.data not aligned to its natural boundary
+; struct VkPerformanceValueINTEL not aligned to its natural boundary
+; VkPipelineExecutableStatisticKHR.value not aligned to its natural boundary
+; VkPhysicalDeviceVulkan12Properties.maxTimelineSemaphoreValueDifference not aligned to its natural boundary
+; VkAccelerationStructureGeometryTrianglesDataKHR.vertexData not aligned to its natural boundary
+; VkAccelerationStructureGeometryInstancesDataKHR.data not aligned to its natural boundary
+; VkAccelerationStructureGeometryKHR.geometry not aligned to its natural boundary
+; VkVideoSessionMemoryRequirementsKHR.memoryRequirements not aligned to its natural boundary
+; VkVideoDecodeAV1PictureInfoKHR.pTileOffsets not aligned to its natural boundary
+; VkVideoDecodeAV1PictureInfoKHR.pTileSizes not aligned to its natural boundary
+; struct VkVideoDecodeAV1PictureInfoKHR not aligned to its natural boundary
+; VkDescriptorGetInfoEXT.data not aligned to its natural boundary
+; VkBufferCollectionPropertiesFUCHSIA.sysmemColorSpaceIndex not aligned to its natural boundary
+; VkBufferConstraintsInfoFUCHSIA.bufferCollectionConstraints not aligned to its natural boundary
+; VkImageFormatConstraintsInfoFUCHSIA.sysmemPixelFormat not aligned to its natural boundary
+; VkImageFormatConstraintsInfoFUCHSIA.pColorSpaces not aligned to its natural boundary
+; struct VkImageFormatConstraintsInfoFUCHSIA not aligned to its natural boundary
+; VkAccelerationStructureTrianglesOpacityMicromapEXT.indexBuffer not aligned to its natural boundary
+; VkAccelerationStructureTrianglesDisplacementMicromapNV.indexBuffer not aligned to its natural boundary
+; VkDispatchGraphCountInfoAMDX.infos not aligned to its natural boundary
+;
+; undefined:
+;	VkPipelineMultisampleStateCreateFlags	(future)
+;	VkPipelineDynamicStateCreateFlags
+;	VkBuildAccelerationStructureFlagsNV
+
+
+
+
+
+
